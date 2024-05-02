@@ -2,6 +2,7 @@ from abc import ABCMeta
 from random import Random
 
 import torch
+from accelerate import Accelerator
 from diffusers.models.attention_processor import AttnProcessor, XFormersAttnProcessor, AttnProcessor2_0
 from diffusers.utils import is_xformers_available
 from torch import Tensor
@@ -24,6 +25,8 @@ from modules.util.dtype_util import create_autocast_context
 from modules.util.enum.AttentionMechanism import AttentionMechanism
 from modules.util.enum.TrainingMethod import TrainingMethod
 
+# Create an instance of Accelerator
+accelerator = Accelerator()
 
 class BaseStableDiffusionSetup(
     BaseModelSetup,
@@ -35,7 +38,8 @@ class BaseStableDiffusionSetup(
 ):
 
     def __init__(self, train_device: torch.device, temp_device: torch.device, debug_mode: bool):
-        super(BaseStableDiffusionSetup, self).__init__(train_device, temp_device, debug_mode)
+        # Replace torch.device with accelerator.device
+        super(BaseStableDiffusionSetup, self).__init__(accelerator.device, accelerator.device, debug_mode)
 
     def _setup_optimizations(
             self,
@@ -68,8 +72,8 @@ class BaseStableDiffusionSetup(
         if config.gradient_checkpointing:
             model.vae.enable_gradient_checkpointing()
             model.unet.enable_gradient_checkpointing()
-            enable_checkpointing_for_transformer_blocks(model.unet, self.train_device)
-            enable_checkpointing_for_clip_encoder_layers(model.text_encoder, self.train_device)
+            enable_checkpointing_for_transformer_blocks(model.unet, self.accelerator.device)
+            enable_checkpointing_for_clip_encoder_layers(model.text_encoder, self.accelerator.device)
 
         if config.force_circular_padding:
             apply_circular_padding_to_conv2d(model.vae)
@@ -77,7 +81,7 @@ class BaseStableDiffusionSetup(
             if model.unet_lora is not None:
                 apply_circular_padding_to_conv2d(model.unet_lora)
 
-        model.autocast_context, model.train_dtype = create_autocast_context(self.train_device, config.train_dtype, [
+        model.autocast_context, model.train_dtype = create_autocast_context(self.accelerator.device, config.train_dtype, [
             config.weight_dtypes().text_encoder,
             config.weight_dtypes().unet,
             config.weight_dtypes().vae,
@@ -100,10 +104,10 @@ class BaseStableDiffusionSetup(
                     config.additional_embeddings[i].initial_embedding_text,
                     config.additional_embeddings[i].token_count,
                 )
-
+                
             embedding_state = embedding_state.to(
                 dtype=model.text_encoder.get_input_embeddings().weight.dtype,
-                device=self.train_device,
+                device=self.accelerator.device,
             ).detach()
 
             embedding = StableDiffusionModelEmbedding(
@@ -130,7 +134,7 @@ class BaseStableDiffusionSetup(
 
         embedding_state = embedding_state.to(
             dtype=model.text_encoder.get_input_embeddings().weight.dtype,
-            device=self.train_device,
+            device=self.accelerator.device,
         ).detach()
 
         model.embedding = StableDiffusionModelEmbedding(
@@ -167,7 +171,7 @@ class BaseStableDiffusionSetup(
                 max_length=77,
                 return_tensors="pt",
             )
-            tokens = tokenizer_output.input_ids.to(model.text_encoder.device)
+            tokens = tokenizer_output.input_ids.to(self.accelerator.device)
 
         # TODO: use attention mask if this is true:
         # hasattr(text_encoder.config, "use_attention_mask") and text_encoder.config.use_attention_mask:
@@ -189,8 +193,7 @@ class BaseStableDiffusionSetup(
             deterministic: bool = False,
     ) -> dict:
         with model.autocast_context:
-            generator = torch.Generator(device=config.train_device)
-            generator.manual_seed(train_progress.global_step)
+            torch.manual_seed(train_progress.global_step)
             rand = Random(train_progress.global_step)
 
             is_align_prop_step = config.align_prop and (rand.random() < config.align_prop_probability)
@@ -234,7 +237,7 @@ class BaseStableDiffusionSetup(
                             1.0 - config.align_prop_truncate_steps))
                 truncate_timestep_index = config.align_prop_steps - rand.randint(timestep_low, timestep_high)
 
-                checkpointed_unet = create_checkpointed_forward(model.unet, self.train_device)
+                checkpointed_unet = create_checkpointed_forward(model.unet, self.accelator.device)
 
                 for step in range(config.align_prop_steps):
                     timestep = model.noise_scheduler.timesteps[step] \
@@ -427,7 +430,7 @@ class BaseStableDiffusionSetup(
                         )
 
                         # predicted image
-                        alphas_cumprod = model.noise_scheduler.alphas_cumprod.to(config.train_device)
+                        alphas_cumprod = model.noise_scheduler.alphas_cumprod.to(accelerator.device)
                         sqrt_alpha_prod = alphas_cumprod[timestep] ** 0.5
                         sqrt_alpha_prod = sqrt_alpha_prod.flatten().reshape(-1, 1, 1, 1)
 
@@ -483,6 +486,6 @@ class BaseStableDiffusionSetup(
             batch=batch,
             data=data,
             config=config,
-            train_device=self.train_device,
-            betas=model.noise_scheduler.betas.to(device=self.train_device),
+            train_device=self.accelerator.device,
+            betas=model.noise_scheduler.betas.to(device=self.accelerator.device),
         ).mean()
