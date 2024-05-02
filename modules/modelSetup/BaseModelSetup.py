@@ -6,6 +6,7 @@ from torch import Tensor
 from torch.nn import Parameter
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.tensorboard import SummaryWriter
+from accelerate import Accelerator
 
 from modules.model.BaseModel import BaseModel
 from modules.util.TimedActionMixin import TimedActionMixin
@@ -29,6 +30,9 @@ class BaseModelSetup(
         self.train_device = train_device
         self.temp_device = temp_device
         self.debug_mode = debug_mode
+        self.accelerator = Accelerator()  # Initialize the Accelerator
+
+        print(f"BaseModelSetup is using: {self.accelerator.state.device} with {self.accelerator.num_processes} processes")
 
     @abstractmethod
     def create_parameters(
@@ -53,12 +57,12 @@ class BaseModelSetup(
     ):
         pass
 
-    @abstractmethod
     def setup_train_device(
             self,
             model: BaseModel,
             config: TrainConfig,
     ):
+        # model, optimizer = self.accelerator.prepare(model, optimizer)  # Prepare the model and optimizer with Accelerator, if needed
         pass
 
     @abstractmethod
