@@ -3,6 +3,8 @@ from typing import Iterable
 import torch
 from torch.nn import Parameter
 
+from accelerate import Accelerator
+
 from modules.model.StableDiffusionModel import StableDiffusionModel
 from modules.modelSetup.BaseStableDiffusionSetup import BaseStableDiffusionSetup
 from modules.util import create
@@ -24,6 +26,15 @@ class StableDiffusionFineTuneVaeSetup(
             temp_device=temp_device,
             debug_mode=debug_mode,
         )
+        
+        # Initialize the accelerator
+        self.accelerator = Accelerator()
+        
+        # Define self.train_device as self.accelerator.device
+        self.train_device = self.accelerator.device
+        
+        # Debug Print
+        print(f"The StableDiffusionFineTuneVAE is using: {self.accelerator.state.device} with {self.accelerator.num_processes} processes")
 
     def create_parameters(
             self,
@@ -72,11 +83,13 @@ class StableDiffusionFineTuneVaeSetup(
             model: StableDiffusionModel,
             config: TrainConfig,
     ):
-        model.text_encoder.to(self.temp_device)
-        model.vae.to(self.train_device)
-        model.unet.to(self.temp_device)
+        accelerator = Accelerator()  # Initialize the accelerator
+
+        model.text_encoder = accelerator.prepare(model.text_encoder)
+        model.vae = accelerator.prepare(model.vae)
+        model.unet = accelerator.prepare(model.unet)
         if model.depth_estimator is not None:
-            model.depth_estimator.to(self.temp_device)
+            model.depth_estimator = accelerator.prepare(model.depth_estimator)
 
         model.text_encoder.eval()
         model.vae.train()
