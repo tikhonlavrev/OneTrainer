@@ -1,4 +1,5 @@
 from util.import_util import script_imports
+from accelerate import Accelerator
 
 script_imports()
 
@@ -7,32 +8,30 @@ from modules.util.enum.ImageFormat import ImageFormat
 from modules.util.enum.TrainingMethod import TrainingMethod
 from modules.util import create
 from modules.util.args.SampleArgs import SampleArgs
-from modules.util.torch_util import default_device
 
 
 def main():
+    accelerator = Accelerator()  # Initialize the accelerator
     args = SampleArgs.parse_args()
-    device = default_device
 
     training_method = TrainingMethod.FINE_TUNE
     if args.embedding_name is not None:
         training_method = TrainingMethod.EMBEDDING
 
     model_loader = create.create_model_loader(args.model_type, training_method=training_method)
-    model_setup = create.create_model_setup(args.model_type, device, device, training_method=training_method)
+    model_setup = create.create_model_setup(args.model_type, accelerator.device, accelerator.device, training_method=training_method)
 
     print("Loading model " + args.base_model_name)
     model = model_loader.load(
         model_type=args.model_type,
-
         weight_dtypes=args.weight_dtypes(),
     )
-    model.to(device)
+    model, _ = accelerator.prepare(model)  # Prepare the model for multi-GPU training
     model.eval()
 
     model_sampler = create.create_model_sampler(
-        train_device=device,
-        temp_device=device,
+        train_device=accelerator.device,
+        temp_device=accelerator.device,
         model=model,
         model_type=args.model_type,
     )
