@@ -40,6 +40,7 @@ class BaseStableDiffusionSetup(
     def __init__(self, train_device: torch.device, temp_device: torch.device, debug_mode: bool):
         # Replace torch.device with accelerator.device
         super(BaseStableDiffusionSetup, self).__init__(accelerator.device, accelerator.device, debug_mode)
+        print(f"The BaseStableDiffusion is using: {self.accelerator.state.device} with {self.accelerator.num_processes} processes")
 
     def _setup_optimizations(
             self,
