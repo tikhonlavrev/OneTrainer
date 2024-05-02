@@ -3,12 +3,15 @@ from typing import Iterable
 import torch
 from torch.nn import Parameter
 
+from accelerate import Accelerator
+
 from modules.model.StableDiffusionModel import StableDiffusionModel
 from modules.modelSetup.BaseStableDiffusionSetup import BaseStableDiffusionSetup
 from modules.util import create
 from modules.util.TrainProgress import TrainProgress
 from modules.util.config.TrainConfig import TrainConfig
 
+accelerator = Accelerator()
 
 class StableDiffusionFineTuneSetup(
     BaseStableDiffusionSetup,
@@ -24,6 +27,7 @@ class StableDiffusionFineTuneSetup(
             temp_device=temp_device,
             debug_mode=debug_mode,
         )
+        self.accelerator = torch.cuda if train_device.type == 'cuda' else torch.cpu
 
     def create_parameters(
             self,
@@ -33,13 +37,13 @@ class StableDiffusionFineTuneSetup(
         params = list()
 
         if config.text_encoder.train:
-            params += list(model.text_encoder.parameters())
+            params += list(model.text_encoder.parameters().to(self.accelerator.device()))
 
         if config.train_any_embedding():
-            params += list(model.embedding_wrapper.parameters())
+            params += list(model.embedding_wrapper.parameters().to(self.accelerator.device()))
 
         if config.unet.train:
-            params += list(model.unet.parameters())
+            params += list(model.unet.parameters().to(self.accelerator.device()))
 
         return params
 
@@ -142,9 +146,9 @@ class StableDiffusionFineTuneSetup(
             or config.align_prop \
             or not config.latent_caching
 
-        model.text_encoder_to(self.train_device if text_encoder_on_train_device else self.temp_device)
-        model.vae_to(self.train_device if vae_on_train_device else self.temp_device)
-        model.unet_to(self.train_device)
+        model.text_encoder_to(accelerator.device if text_encoder_on_train_device else self.temp_device)
+        model.vae_to(accelerator.device if vae_on_train_device else self.temp_device)
+        model.unet_to(accelerator.device)
         model.depth_estimator_to(self.temp_device)
 
         if config.text_encoder.train:
