@@ -2,6 +2,7 @@ import json
 import os
 
 import torch
+from accelerate import Accelerator
 from mgds.MGDS import TrainDataLoader, MGDS
 from mgds.OutputPipelineModule import OutputPipelineModule
 from mgds.pipelineModules.AspectBatchSorting import AspectBatchSorting
@@ -70,12 +71,17 @@ class StableDiffusionFineTuneVaeDataLoader(BaseDataLoader):
             temp_device: torch.device,
             config: TrainConfig,
     ):
-        model.to(self.temp_device)
+        accelerator = Accelerator()
+        model = accelerator.prepare(model)
+        self.temp_device = accelerator.device
+        train_device = accelerator.device
 
         model.vae_to(train_device)
 
         model.eval()
         torch_gc()
+
+        print(f"The StableDiffusionFineTuneVaeDataLoader is using: {self.accelerator.state.device} with {self.accelerator.num_processes} processes")
 
     def __enumerate_input_modules(self, config: TrainConfig) -> list:
         supported_extensions = path_util.supported_image_extensions()
@@ -303,20 +309,23 @@ class StableDiffusionFineTuneVaeDataLoader(BaseDataLoader):
 
         debug_modules = self.__debug_modules(config, model)
 
-        return self._create_mgds(
-            config,
-            [
-                enumerate_input,
-                load_input,
-                mask_augmentation,
-                aspect_bucketing_in,
-                crop_modules,
-                augmentation_modules,
-                preparation_modules,
-                cache_modules,
-                output_modules,
+        with accelerator.main_process_first()
+            mgds = self._create_mgds(
+                config,
+                [
+                    enumerate_input,
+                    load_input,
+                    mask_augmentation,
+                    aspect_bucketing_in,
+                    crop_modules,
+                    augmentation_modules,
+                    preparation_modules,
+                    cache_modules,
+                    output_modules,
 
-                debug_modules if config.debug_mode else None,
-            ],
-            train_progress
-        )
+                    debug_modules if config.debug_mode else None,
+                ],
+                train_progress
+            )
+        
+        return mgds
