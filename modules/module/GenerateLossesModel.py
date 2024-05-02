@@ -3,6 +3,7 @@ import os
 
 import torch
 from tqdm import tqdm
+from accelerate import Accelerator
 
 from modules.dataLoader import StableDiffusionFineTuneDataLoader
 from modules.model.BaseModel import BaseModel
@@ -34,8 +35,11 @@ class GenerateLossesModel:
 
         self.config = config
         self.output_path = output_path
-        self.train_device = torch.device(self.config.train_device)
-        self.temp_device = torch.device(self.config.temp_device)
+        self.accelerator = Accelerator()  # Initialize the accelerator
+        self.train_device = self.accelerator.device  # Use accelerator's device
+        self.temp_device = self.accelerator.device  # Use accelerator's device
+
+        print(f"The GenerateLossesModel is using: {self.accelerator.state.device} with {self.accelerator.num_processes} processes")
     
     def start(self):
         if self.config.train_dtype.enable_tf():
@@ -60,6 +64,7 @@ class GenerateLossesModel:
         )
 
         self.model_setup.setup_model(self.model, self.config)
+        self.model = self.accelerator.prepare(self.model)  # Prepare the model for distributed training
         self.model.eval()
         self.model.train_progress = TrainProgress()
         torch_gc()
